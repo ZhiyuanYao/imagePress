@@ -27,9 +27,12 @@ except ImportError:
 
 
 class PhotoEditorApp(TK_ROOT):
-    PAD_X_RATIO = 0.08
-    PAD_Y_RATIO = 0.08
-    GUIDE_COLOR = "#78b0ff"
+    PAD_X_RATIO = 0.06
+    PAD_Y_RATIO = 0.06
+    GUIDE_COLOR = "#F4F4F4"
+    CANVAS_BG = "#282827"
+    MIN_ZOOM = 0.25
+    MAX_ZOOM = 8.0
 
     def __init__(self, initial_path: str | None = None) -> None:
         super().__init__()
@@ -43,8 +46,12 @@ class PhotoEditorApp(TK_ROOT):
         self.tk_image: ImageTk.PhotoImage | None = None
 
         self.scale = 1.0
+        self.zoom_ratio = 1.0
         self.image_x = 0
         self.image_y = 0
+
+        self.zoom_percent_var = tk.StringVar(value="100%")
+        self.zoom_entry: ttk.Entry | None = None
 
         self.crop_rect_id: int | None = None
         self.crop_start: tuple[int, int] | None = None
@@ -63,6 +70,8 @@ class PhotoEditorApp(TK_ROOT):
         self.target_kb_var = tk.StringVar(value="300")
         self.max_width_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="")
+        self.bg_gray_var = tk.IntVar(value=40)
+        self.bg_gray_value_var = tk.StringVar(value="40")
 
         self._setup_styles()
         self._build_ui()
@@ -161,9 +170,10 @@ class PhotoEditorApp(TK_ROOT):
 
         style.configure("App.TFrame", background="#eef3f8")
         style.configure("Bar.TFrame", background="#f8fbff")
+        style.configure("CanvasCard.TFrame", background="#f8fbff")
         style.configure("Field.TLabel", background="#f8fbff", foreground="#5a6b82")
         style.configure("Unit.TLabel", background="#f8fbff", foreground="#97a3b5")
-        style.configure("Primary.TButton", foreground="#ffffff", background="#5f8fe8", padding=(11, 4))
+        style.configure("Primary.TButton", foreground="#ffffff", background="#5f8fe8", padding=(8, 2))
         style.map(
             "Primary.TButton",
             background=[("active", "#4f81dd"), ("pressed", "#416fc9"), ("disabled", "#a7c0ef")],
@@ -171,7 +181,7 @@ class PhotoEditorApp(TK_ROOT):
         )
         style.configure(
             "Neutral.TButton",
-            padding=(10, 4),
+            padding=(8, 2),
             background="#eaf1fb",
             foreground="#3f5878",
             bordercolor="#d7e2f4",
@@ -180,14 +190,23 @@ class PhotoEditorApp(TK_ROOT):
             "Neutral.TButton",
             background=[("active", "#dfe9f8"), ("pressed", "#d3e0f4")],
         )
-        style.configure("TEntry", fieldbackground="#ffffff")
+        style.configure(
+            "TEntry",
+            fieldbackground="#ffffff",
+            foreground="#111827",
+            insertcolor="#111827",
+            bordercolor="#5C6474",
+            lightcolor="#5C6474",
+            darkcolor="#5C6474",
+            padding=(5, 2),
+        )
 
     def _build_ui(self) -> None:
-        main = ttk.Frame(self, style="App.TFrame", padding=(14, 12, 14, 12))
+        main = ttk.Frame(self, style="App.TFrame", padding=(12, 10, 12, 12))
         main.pack(fill="both", expand=True)
 
-        control_row = ttk.Frame(main, style="Bar.TFrame", padding=(12, 10))
-        control_row.pack(fill="x", pady=(0, 10))
+        control_row = ttk.Frame(main, style="Bar.TFrame", padding=(10, 6))
+        control_row.pack(fill="x", pady=(0, 8))
 
         ttk.Button(control_row, text="Open", style="Primary.TButton", command=self.open_image, takefocus=False).pack(
             side="left", padx=(0, 8)
@@ -197,20 +216,20 @@ class PhotoEditorApp(TK_ROOT):
         )
         self.crop_button.pack(side="left", padx=(0, 8))
         ttk.Button(control_row, text="Save", style="Neutral.TButton", command=self.save_cropped, takefocus=False).pack(
-            side="left", padx=(0, 16)
+            side="left", padx=(0, 12)
         )
 
-        ttk.Separator(control_row, orient="vertical").pack(side="left", fill="y", padx=(0, 16))
+        ttk.Separator(control_row, orient="vertical").pack(side="left", fill="y", padx=(0, 12))
 
         ttk.Label(control_row, text="max size", style="Field.TLabel").pack(side="left")
         size_input = ttk.Frame(control_row, style="Bar.TFrame")
-        size_input.pack(side="left", padx=(6, 14))
+        size_input.pack(side="left", padx=(6, 12))
         ttk.Entry(size_input, width=7, textvariable=self.target_kb_var, justify="right").pack(side="left")
         ttk.Label(size_input, text="KB", style="Unit.TLabel").pack(side="left", padx=(6, 0))
 
         ttk.Label(control_row, text="max width", style="Field.TLabel").pack(side="left")
         width_input = ttk.Frame(control_row, style="Bar.TFrame")
-        width_input.pack(side="left", padx=(6, 12))
+        width_input.pack(side="left", padx=(6, 10))
         ttk.Entry(width_input, width=7, textvariable=self.max_width_var, justify="right").pack(side="left")
         ttk.Label(width_input, text="px", style="Unit.TLabel").pack(side="left", padx=(6, 0))
 
@@ -220,13 +239,64 @@ class PhotoEditorApp(TK_ROOT):
             style="Neutral.TButton",
             command=self.save_compressed,
             takefocus=False,
+        ).pack(side="left", padx=(0, 10))
+
+        ttk.Label(control_row, text="bg", style="Field.TLabel").pack(side="left")
+        bg_input = ttk.Frame(control_row, style="Bar.TFrame")
+        bg_input.pack(side="left", padx=(6, 12))
+        self.bg_scale = ttk.Scale(
+            bg_input,
+            from_=0,
+            to=255,
+            orient="horizontal",
+            variable=self.bg_gray_var,
+            command=self._on_bg_gray_changed,
+            length=120,
+        )
+        self.bg_scale.pack(side="left")
+        ttk.Label(bg_input, textvariable=self.bg_gray_value_var, style="Unit.TLabel", width=3).pack(side="left", padx=(6, 0))
+
+        ttk.Separator(control_row, orient="vertical").pack(side="left", fill="y", padx=(0, 10))
+
+        ttk.Button(
+            control_row,
+            text="−",
+            width=3,
+            style="Neutral.TButton",
+            command=self.zoom_out,
+            takefocus=False,
+        ).pack(side="left", padx=(0, 6))
+
+        self.zoom_entry = ttk.Entry(control_row, width=6, textvariable=self.zoom_percent_var, justify="center")
+        self.zoom_entry.pack(side="left", padx=(0, 6))
+        self.zoom_entry.bind("<Return>", self._apply_zoom_from_entry)
+        self.zoom_entry.bind("<KP_Enter>", self._apply_zoom_from_entry)
+        self.zoom_entry.bind("<FocusOut>", self._apply_zoom_from_entry)
+
+        ttk.Button(
+            control_row,
+            text="+",
+            width=3,
+            style="Neutral.TButton",
+            command=self.zoom_in,
+            takefocus=False,
         ).pack(side="left")
 
-        canvas_card = ttk.Frame(main, style="Bar.TFrame", padding=(12, 12))
+        canvas_card = ttk.Frame(main, style="CanvasCard.TFrame", padding=(0, 0, 0, 0))
         canvas_card.pack(fill="both", expand=True)
+        canvas_card.grid_rowconfigure(0, weight=1)
+        canvas_card.grid_columnconfigure(0, weight=1)
 
-        self.canvas = tk.Canvas(canvas_card, background="#b9bec7", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(canvas_card, background=self.CANVAS_BG, highlightthickness=0, borderwidth=0)
+        self._apply_bg_gray(self.bg_gray_var.get())
+        self.h_scroll = ttk.Scrollbar(canvas_card, orient="horizontal", command=self.canvas.xview)
+        self.v_scroll = ttk.Scrollbar(canvas_card, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=self.h_scroll.set, yscrollcommand=self.v_scroll.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
         self.canvas.bind("<ButtonPress-1>", self._on_mouse_down)
         self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
@@ -234,9 +304,164 @@ class PhotoEditorApp(TK_ROOT):
         self.bind("<Configure>", self._on_window_resize)
         self.bind("<Escape>", self._on_escape_key)
 
+        self.bind_all("<KeyPress-c>", self._on_shortcut_crop, add="+")
+        self.bind_all("<KeyPress-C>", self._on_shortcut_crop, add="+")
+        self.bind_all("<KeyPress-s>", self._on_shortcut_save, add="+")
+        self.bind_all("<KeyPress-S>", self._on_shortcut_save, add="+")
+        self.bind_all("<KeyPress-u>", self._on_shortcut_undo, add="+")
+        self.bind_all("<KeyPress-U>", self._on_shortcut_undo, add="+")
+
+        self.bind_all("<KeyPress-equal>", self._on_shortcut_zoom_in, add="+")
+        self.bind_all("<KeyPress-plus>", self._on_shortcut_zoom_in, add="+")
+        self.bind_all("<KeyPress-minus>", self._on_shortcut_zoom_out, add="+")
+        self.bind_all("<KeyPress-underscore>", self._on_shortcut_zoom_out, add="+")
+
+        for seq in (
+            "<Control-plus>",
+            "<Control-equal>",
+            "<Control-KP_Add>",
+            "<Command-plus>",
+            "<Command-equal>",
+            "<Command-KP_Add>",
+        ):
+            self.bind_all(seq, self._on_shortcut_zoom_in, add="+")
+        for seq in ("<Control-minus>", "<Control-KP_Subtract>", "<Command-minus>", "<Command-KP_Subtract>"):
+            self.bind_all(seq, self._on_shortcut_zoom_out, add="+")
+
+    @staticmethod
+    def _gray_to_hex(value: int) -> str:
+        gray = max(0, min(255, int(value)))
+        return f"#{gray:02x}{gray:02x}{gray:02x}"
+
+    def _apply_bg_gray(self, value: int | str) -> None:
+        try:
+            gray = int(float(value))
+        except (TypeError, ValueError):
+            gray = int(self.bg_gray_var.get() or 40)
+        gray = max(0, min(255, gray))
+
+        if int(self.bg_gray_var.get()) != gray:
+            self.bg_gray_var.set(gray)
+        self.bg_gray_value_var.set(str(gray))
+
+        color = self._gray_to_hex(gray)
+        if hasattr(self, "canvas") and self.canvas is not None:
+            self.canvas.configure(background=color)
+            if self.crop_mode and self.crop_rect_id is not None:
+                self._update_crop_overlay()
+
+    def _on_bg_gray_changed(self, value: str) -> None:
+        self._apply_bg_gray(value)
+
     def _on_window_resize(self, event: tk.Event) -> None:
         if event.widget == self:
-            self.after(30, self._render_image)
+            self.after(20, lambda: self._render_image(preserve_view=True))
+
+    def _get_view_center(self) -> tuple[float, float]:
+        view_w = max(self.canvas.winfo_width(), 1)
+        view_h = max(self.canvas.winfo_height(), 1)
+        return (self.canvas.canvasx(view_w / 2), self.canvas.canvasy(view_h / 2))
+
+    def _restore_view_center(self, center_x: float, center_y: float) -> None:
+        region = self.canvas.cget("scrollregion")
+        if not region:
+            return
+
+        try:
+            x1, y1, x2, y2 = [float(v) for v in str(region).split()]
+        except Exception:
+            return
+
+        total_w = max(x2 - x1, 1.0)
+        total_h = max(y2 - y1, 1.0)
+        view_w = max(self.canvas.winfo_width(), 1)
+        view_h = max(self.canvas.winfo_height(), 1)
+
+        if total_w <= view_w:
+            self.canvas.xview_moveto(0.0)
+        else:
+            target_left = max(x1, min(center_x - (view_w / 2), x2 - view_w))
+            self.canvas.xview_moveto((target_left - x1) / total_w)
+
+        if total_h <= view_h:
+            self.canvas.yview_moveto(0.0)
+        else:
+            target_top = max(y1, min(center_y - (view_h / 2), y2 - view_h))
+            self.canvas.yview_moveto((target_top - y1) / total_h)
+
+    def _set_zoom_text(self) -> None:
+        pct = int(round(self.zoom_ratio * 100))
+        pct = max(int(self.MIN_ZOOM * 100), min(int(self.MAX_ZOOM * 100), pct))
+        self.zoom_percent_var.set(f"{pct}%")
+
+    def _set_zoom_ratio(self, ratio: float, preserve_view: bool = True) -> None:
+        clamped = max(self.MIN_ZOOM, min(self.MAX_ZOOM, ratio))
+        if abs(clamped - self.zoom_ratio) < 0.0001:
+            self._set_zoom_text()
+            return
+
+        center = self._get_view_center() if preserve_view else None
+        self.zoom_ratio = clamped
+        self._set_zoom_text()
+        self._render_image(preserve_view=preserve_view, view_center=center)
+
+    def zoom_in(self) -> None:
+        self._set_zoom_ratio(self.zoom_ratio * 1.25)
+
+    def zoom_out(self) -> None:
+        self._set_zoom_ratio(self.zoom_ratio / 1.25)
+
+    def _apply_zoom_from_entry(self, _event: tk.Event | None = None) -> str | None:
+        raw = self.zoom_percent_var.get().strip().replace("%", "")
+        try:
+            pct = float(raw)
+        except ValueError:
+            self._set_zoom_text()
+            return "break"
+
+        self._set_zoom_ratio(pct / 100.0)
+        return "break"
+
+    def _entry_has_focus(self, allow_zoom_entry: bool = False) -> bool:
+        widget = self.focus_get()
+        if widget is None:
+            return False
+
+        if isinstance(widget, (tk.Entry, ttk.Entry, tk.Text)):
+            if allow_zoom_entry and widget == self.zoom_entry:
+                return False
+            return True
+        return False
+
+    def _on_shortcut_crop(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus():
+            return None
+        self.on_crop_or_undo()
+        return "break"
+
+    def _on_shortcut_save(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus():
+            return None
+        self.save_cropped()
+        return "break"
+
+    def _on_shortcut_undo(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus():
+            return None
+        self.undo_last_crop()
+        return "break"
+
+    def _on_shortcut_zoom_in(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus(allow_zoom_entry=True):
+            return None
+        self.zoom_in()
+        return "break"
+
+    def _on_shortcut_zoom_out(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus(allow_zoom_entry=True):
+            return None
+        self.zoom_out()
+        return "break"
 
     def open_image(self) -> None:
         path = filedialog.askopenfilename(
@@ -265,6 +490,8 @@ class PhotoEditorApp(TK_ROOT):
         self.source_path = path
         self.working_image = loaded.copy()
         self.undo_image = None
+        self.zoom_ratio = 1.0
+        self._set_zoom_text()
         self._set_crop_button_mode(is_undo=False)
         self.status_var.set("")
         self._render_image()
@@ -322,7 +549,11 @@ class PhotoEditorApp(TK_ROOT):
         token = os.path.expanduser(token)
         return os.path.abspath(token)
 
-    def _render_image(self) -> None:
+    def _render_image(self, preserve_view: bool = False, view_center: tuple[float, float] | None = None) -> None:
+        center = view_center
+        if preserve_view and center is None:
+            center = self._get_view_center()
+
         self.canvas.delete("all")
         self.crop_rect_id = None
         self.crop_start = None
@@ -348,12 +579,16 @@ class PhotoEditorApp(TK_ROOT):
         usable_h = max(canvas_h - (2 * pad_y), 1)
 
         fit_scale = min(usable_w / src_w, usable_h / src_h, 1.0)
-        disp_w = max(int(src_w * fit_scale), 1)
-        disp_h = max(int(src_h * fit_scale), 1)
+        draw_scale = max(fit_scale * self.zoom_ratio, 0.01)
+        disp_w = max(int(src_w * draw_scale), 1)
+        disp_h = max(int(src_h * draw_scale), 1)
 
-        self.scale = fit_scale
-        self.image_x = (canvas_w - disp_w) // 2
-        self.image_y = (canvas_h - disp_h) // 2
+        self.scale = draw_scale
+
+        content_w = max(canvas_w, disp_w)
+        content_h = max(canvas_h, disp_h)
+        self.image_x = (content_w - disp_w) // 2
+        self.image_y = (content_h - disp_h) // 2
 
         if (disp_w, disp_h) != self.working_image.size:
             self.display_image = self.working_image.resize((disp_w, disp_h), Image.Resampling.LANCZOS)
@@ -362,6 +597,12 @@ class PhotoEditorApp(TK_ROOT):
 
         self.tk_image = ImageTk.PhotoImage(self.display_image)
         self.canvas.create_image(self.image_x, self.image_y, anchor="nw", image=self.tk_image)
+        self.canvas.configure(scrollregion=(0, 0, content_w, content_h))
+
+        if center is not None:
+            self._restore_view_center(center[0], center[1])
+        else:
+            self._restore_view_center(content_w / 2, content_h / 2)
 
     def _on_mouse_down(self, event: tk.Event) -> None:
         if self.display_image is None:
@@ -370,7 +611,9 @@ class PhotoEditorApp(TK_ROOT):
         if not self.crop_mode:
             return
 
-        x, y = self._clamp_to_image(event.x, event.y, require_inside=False)
+        cx = int(self.canvas.canvasx(event.x))
+        cy = int(self.canvas.canvasy(event.y))
+        x, y = self._clamp_to_image(cx, cy, require_inside=False)
         if x is None or y is None:
             return
 
@@ -392,7 +635,9 @@ class PhotoEditorApp(TK_ROOT):
         if not self.crop_mode or self.crop_rect_id is None or self.active_drag_mode is None:
             return
 
-        x, y = self._clamp_to_image(event.x, event.y)
+        cx = int(self.canvas.canvasx(event.x))
+        cy = int(self.canvas.canvasy(event.y))
+        x, y = self._clamp_to_image(cx, cy)
         if x is None or y is None:
             return
 
@@ -761,7 +1006,7 @@ class PhotoEditorApp(TK_ROOT):
             label_y + padding_y,
             anchor="nw",
             text=text,
-            fill="#f8fbff",
+            fill="#f8fafc",
             font=self.crop_info_font,
         )
         text_bbox = self.canvas.bbox(self.crop_size_text_id)
@@ -773,9 +1018,9 @@ class PhotoEditorApp(TK_ROOT):
             text_bbox[1] - 2,
             text_bbox[2] + 3,
             text_bbox[3] + 2,
-            fill="#6d98e8",
-            outline="#5a84d4",
-            width=1,
+            fill="#0f172a",
+            outline="#0f172a",
+            width=0,
         )
         self.canvas.tag_raise(self.crop_size_text_id, self.crop_size_bg_id)
 

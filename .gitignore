@@ -1,0 +1,45 @@
+#==============================
+# Operating System Files
+#==============================
+# macOS
+.DS_Store
+Icon?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Universal Thumbnail Files
+._*
+
+#==============================
+# IDEs and Editors
+#==============================
+.claude/
+.vscode/
+.idea/
+
+# Vim
+*.swo
+*.swn
+
+#==============================
+# Python Development Artifacts
+#==============================
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+.venv/
+.cache/
+.pyright/
+*.pyd
+
+#==============================
+# Backup and Temporary Files
+#==============================
+*.tmp
+*.temp
+*.swp
