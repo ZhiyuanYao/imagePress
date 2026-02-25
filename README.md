@@ -21,6 +21,12 @@ pip install -r requirements.txt
 python photo_editor_app.py
 ```
 
+Open an image directly from command line:
+
+```bash
+python photo_editor_app.py /path/to/image.jpg
+```
+
 If drag-and-drop does not work, check that DnD support is installed in the same Python environment:
 
 ```bash
@@ -33,13 +39,13 @@ python -c "import tkinterdnd2; print('DnD OK')"
 
 1. Click `Open`
    - or drag an image file into the app window
-2. Drag on the image to draw a crop box
-   - drawing a new rectangle replaces the previous selection
-   - press `Esc` to clear current crop selection
-3. Click `Crop` to commit the crop
-4. After crop, `Crop` becomes `Undo` for one-step crop rollback
-5. Use `Save` for direct export
-6. Use `Compress` if you want size-target compression (`KB`) and optional resize width (`W`)
+2. Click `Crop` to enter crop mode
+3. Drag the corner handles (`⌜ ⌝ ⌞ ⌟`) to adjust the crop region
+   - press `Esc` to clear the current crop selection/mode
+4. Click `Crop` again to apply the crop
+5. After crop, `Crop` becomes `Undo` for one-step rollback
+6. Use `Save` for direct export
+7. Use `Compress` if you want size-target compression (`max size`) and optional resize width (`max width`)
 
 ## Build as macOS app (optional)
 

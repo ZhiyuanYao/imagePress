@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import io
 import os
 import sys
@@ -7,7 +8,7 @@ import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import unquote, urlparse
 
-from PIL import Image, ImageDraw, ImageTk, UnidentifiedImageError
+from PIL import Image, ImageTk, UnidentifiedImageError
 
 try:
     import cairosvg
@@ -28,8 +29,9 @@ except ImportError:
 class PhotoEditorApp(TK_ROOT):
     PAD_X_RATIO = 0.08
     PAD_Y_RATIO = 0.08
+    GUIDE_COLOR = "#78b0ff"
 
-    def __init__(self) -> None:
+    def __init__(self, initial_path: str | None = None) -> None:
         super().__init__()
         self.title("Quick Crop + Compress")
         self.geometry("1100x760")
@@ -46,10 +48,14 @@ class PhotoEditorApp(TK_ROOT):
 
         self.crop_rect_id: int | None = None
         self.crop_start: tuple[int, int] | None = None
+        self.crop_mode = False
+        self.active_corner: str | None = None
+        self.active_drag_mode: str | None = None
+        self.move_anchor: tuple[int, int] | None = None
+        self.crop_corner_ids: list[int] = []
         self.crop_size_text_id: int | None = None
         self.crop_size_bg_id: int | None = None
-        self.crop_overlay_id: int | None = None
-        self.crop_overlay_tk: ImageTk.PhotoImage | None = None
+        self.crop_overlay_ids: list[int] = []
         self.icon_image: tk.PhotoImage | None = None
         self.undo_image: Image.Image | None = None
         self.crop_info_font = tkfont.Font(family="Helvetica Neue", size=11, weight="bold")
@@ -63,7 +69,35 @@ class PhotoEditorApp(TK_ROOT):
         self._set_app_icon()
         if HAS_DND:
             self.after(50, self._enable_drag_and_drop)
+        if initial_path:
+            self.after(80, lambda: self._open_initial_path(initial_path))
+            self.after(130, self._bring_to_front)
         self.after(120, self._render_image)
+
+    def _open_initial_path(self, path: str) -> None:
+        normalized = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isfile(normalized):
+            messagebox.showerror("Open failed", f"Not a file:\n{normalized}")
+            return
+        self._load_image(normalized)
+
+    def _bring_to_front(self) -> None:
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            self.attributes("-topmost", True)
+            self.after(250, lambda: self.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+
+        if sys.platform == "darwin":
+            try:
+                from AppKit import NSApplication
+
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
 
     def _set_app_icon(self) -> None:
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -292,10 +326,14 @@ class PhotoEditorApp(TK_ROOT):
         self.canvas.delete("all")
         self.crop_rect_id = None
         self.crop_start = None
+        self.crop_mode = False
+        self.active_corner = None
+        self.active_drag_mode = None
+        self.move_anchor = None
+        self._clear_corner_guides()
         self.crop_size_text_id = None
         self.crop_size_bg_id = None
-        self.crop_overlay_id = None
-        self.crop_overlay_tk = None
+        self.crop_overlay_ids = []
 
         if self.working_image is None:
             return
@@ -329,37 +367,65 @@ class PhotoEditorApp(TK_ROOT):
         if self.display_image is None:
             return
 
+        if not self.crop_mode:
+            return
+
         x, y = self._clamp_to_image(event.x, event.y, require_inside=False)
         if x is None or y is None:
             return
 
-        self._clear_crop_selection()
+        self.active_corner = self._hit_corner_handle(x, y)
+        if self.active_corner is not None:
+            self.active_drag_mode = "corner"
+            self.move_anchor = None
+            return
 
-        self.crop_start = (x, y)
-        self.crop_rect_id = self.canvas.create_rectangle(
-            x, y, x, y, outline="#4f80d8", width=2, dash=(4, 2)
-        )
+        if self._point_in_crop_rect(x, y):
+            self.active_drag_mode = "move"
+            self.move_anchor = (x, y)
+            return
+
+        self.active_drag_mode = None
+        self.move_anchor = None
 
     def _on_mouse_drag(self, event: tk.Event) -> None:
-        if self.crop_rect_id is None or self.crop_start is None:
+        if not self.crop_mode or self.crop_rect_id is None or self.active_drag_mode is None:
             return
 
         x, y = self._clamp_to_image(event.x, event.y)
         if x is None or y is None:
             return
 
-        sx, sy = self.crop_start
-        self.canvas.coords(self.crop_rect_id, sx, sy, x, y)
+        if self.active_drag_mode == "corner" and self.active_corner is not None:
+            constrain_square = bool(getattr(event, "state", 0) & 0x0001)
+            self._drag_corner_handle(self.active_corner, x, y, constrain_square=constrain_square)
+        elif self.active_drag_mode == "move":
+            self._drag_crop_region(x, y)
+        else:
+            return
+
         self._update_crop_overlay()
+        self._draw_corner_guides()
         self._update_crop_size_indicator()
 
     def _on_mouse_up(self, _event: tk.Event) -> None:
-        return
+        self.active_corner = None
+        self.active_drag_mode = None
+        self.move_anchor = None
 
     def _on_escape_key(self, _event: tk.Event) -> None:
         self._clear_crop_selection()
+        self.crop_mode = False
+        self.active_drag_mode = None
+        self.move_anchor = None
+        if self.undo_image is None:
+            self._set_crop_button_mode(is_undo=False)
 
     def _clear_crop_selection(self) -> None:
+        self.active_corner = None
+        self.active_drag_mode = None
+        self.move_anchor = None
+        self._clear_corner_guides()
         self._clear_crop_overlay()
         self._clear_crop_size_indicator()
         if self.crop_rect_id is not None:
@@ -367,11 +433,230 @@ class PhotoEditorApp(TK_ROOT):
             self.crop_rect_id = None
         self.crop_start = None
 
+    def _clear_corner_guides(self) -> None:
+        if not self.crop_corner_ids:
+            return
+        for guide_id in self.crop_corner_ids:
+            self.canvas.delete(guide_id)
+        self.crop_corner_ids = []
+
+    def _draw_corner_guides(self) -> None:
+        self._clear_corner_guides()
+        if self.crop_rect_id is None:
+            return
+
+        x1, y1, x2, y2 = self.canvas.coords(self.crop_rect_id)
+        left, right = sorted([x1, x2])
+        top, bottom = sorted([y1, y2])
+        width = right - left
+        height = bottom - top
+        if width < 2 or height < 2:
+            return
+
+        seg = max(14, min(30, int(min(width, height) * 0.18)))
+        color = self.GUIDE_COLOR
+        thickness = 3
+
+        # Top-left: ⌜
+        self.crop_corner_ids.append(
+            self.canvas.create_line(left, top, left + seg, top, fill=color, width=thickness, capstyle="round")
+        )
+        self.crop_corner_ids.append(
+            self.canvas.create_line(left, top, left, top + seg, fill=color, width=thickness, capstyle="round")
+        )
+        # Top-right: ⌝
+        self.crop_corner_ids.append(
+            self.canvas.create_line(right - seg, top, right, top, fill=color, width=thickness, capstyle="round")
+        )
+        self.crop_corner_ids.append(
+            self.canvas.create_line(right, top, right, top + seg, fill=color, width=thickness, capstyle="round")
+        )
+        # Bottom-left: ⌞
+        self.crop_corner_ids.append(
+            self.canvas.create_line(left, bottom, left + seg, bottom, fill=color, width=thickness, capstyle="round")
+        )
+        self.crop_corner_ids.append(
+            self.canvas.create_line(left, bottom - seg, left, bottom, fill=color, width=thickness, capstyle="round")
+        )
+        # Bottom-right: ⌟
+        self.crop_corner_ids.append(
+            self.canvas.create_line(right - seg, bottom, right, bottom, fill=color, width=thickness, capstyle="round")
+        )
+        self.crop_corner_ids.append(
+            self.canvas.create_line(right, bottom - seg, right, bottom, fill=color, width=thickness, capstyle="round")
+        )
+
+        for guide_id in self.crop_corner_ids:
+            self.canvas.tag_raise(guide_id)
+
+    def _hit_corner_handle(self, x: int, y: int) -> str | None:
+        if self.crop_rect_id is None:
+            return None
+
+        x1, y1, x2, y2 = self.canvas.coords(self.crop_rect_id)
+        left, right = sorted([x1, x2])
+        top, bottom = sorted([y1, y2])
+        corners = {
+            "nw": (left, top),
+            "ne": (right, top),
+            "sw": (left, bottom),
+            "se": (right, bottom),
+        }
+
+        hit_radius = 18
+        hit_radius_sq = hit_radius * hit_radius
+        nearest: tuple[str, float] | None = None
+        for key, (cx, cy) in corners.items():
+            dist_sq = ((x - cx) * (x - cx)) + ((y - cy) * (y - cy))
+            if dist_sq <= hit_radius_sq and (nearest is None or dist_sq < nearest[1]):
+                nearest = (key, dist_sq)
+
+        return nearest[0] if nearest is not None else None
+
+    def _point_in_crop_rect(self, x: int, y: int) -> bool:
+        if self.crop_rect_id is None:
+            return False
+        x1, y1, x2, y2 = self.canvas.coords(self.crop_rect_id)
+        left, right = sorted([x1, x2])
+        top, bottom = sorted([y1, y2])
+        return left <= x <= right and top <= y <= bottom
+
+    def _drag_corner_handle(self, corner: str, x: int, y: int, constrain_square: bool = False) -> None:
+        if self.crop_rect_id is None:
+            return
+        if self.display_image is None:
+            return
+
+        x1, y1, x2, y2 = self.canvas.coords(self.crop_rect_id)
+        left, right = sorted([x1, x2])
+        top, bottom = sorted([y1, y2])
+
+        img_left = self.image_x
+        img_top = self.image_y
+        img_right = self.image_x + self.display_image.size[0]
+        img_bottom = self.image_y + self.display_image.size[1]
+        min_size = 12
+
+        if corner == "nw":
+            fixed_x, fixed_y = right, bottom
+            trial_x, trial_y = x, y
+            max_size = min(fixed_x - img_left, fixed_y - img_top)
+        elif corner == "ne":
+            fixed_x, fixed_y = left, bottom
+            trial_x, trial_y = x, y
+            max_size = min(img_right - fixed_x, fixed_y - img_top)
+        elif corner == "sw":
+            fixed_x, fixed_y = right, top
+            trial_x, trial_y = x, y
+            max_size = min(fixed_x - img_left, img_bottom - fixed_y)
+        else:  # "se"
+            fixed_x, fixed_y = left, top
+            trial_x, trial_y = x, y
+            max_size = min(img_right - fixed_x, img_bottom - fixed_y)
+
+        if constrain_square:
+            side = max(abs(trial_x - fixed_x), abs(trial_y - fixed_y))
+            max_size = max(1, int(max_size))
+            side = max(min_size if max_size >= min_size else max_size, min(side, max_size))
+
+            if corner == "nw":
+                left = fixed_x - side
+                top = fixed_y - side
+                right = fixed_x
+                bottom = fixed_y
+            elif corner == "ne":
+                left = fixed_x
+                top = fixed_y - side
+                right = fixed_x + side
+                bottom = fixed_y
+            elif corner == "sw":
+                left = fixed_x - side
+                top = fixed_y
+                right = fixed_x
+                bottom = fixed_y + side
+            else:
+                left = fixed_x
+                top = fixed_y
+                right = fixed_x + side
+                bottom = fixed_y + side
+        else:
+            if corner == "nw":
+                left, top = trial_x, trial_y
+            elif corner == "ne":
+                right, top = trial_x, trial_y
+            elif corner == "sw":
+                left, bottom = trial_x, trial_y
+            else:
+                right, bottom = trial_x, trial_y
+
+            if right - left < min_size:
+                if corner in ("nw", "sw"):
+                    left = right - min_size
+                else:
+                    right = left + min_size
+            if bottom - top < min_size:
+                if corner in ("nw", "ne"):
+                    top = bottom - min_size
+                else:
+                    bottom = top + min_size
+
+            left = max(img_left, min(left, img_right - 1))
+            right = max(left + 1, min(right, img_right))
+            top = max(img_top, min(top, img_bottom - 1))
+            bottom = max(top + 1, min(bottom, img_bottom))
+
+        self.canvas.coords(self.crop_rect_id, left, top, right, bottom)
+
+    def _drag_crop_region(self, x: int, y: int) -> None:
+        if self.crop_rect_id is None or self.move_anchor is None:
+            return
+        if self.display_image is None:
+            return
+
+        anchor_x, anchor_y = self.move_anchor
+        dx = x - anchor_x
+        dy = y - anchor_y
+        if dx == 0 and dy == 0:
+            return
+
+        x1, y1, x2, y2 = self.canvas.coords(self.crop_rect_id)
+        left, right = sorted([x1, x2])
+        top, bottom = sorted([y1, y2])
+        width = right - left
+        height = bottom - top
+
+        new_left = left + dx
+        new_right = right + dx
+        new_top = top + dy
+        new_bottom = bottom + dy
+
+        img_left = self.image_x
+        img_top = self.image_y
+        img_right = self.image_x + self.display_image.size[0]
+        img_bottom = self.image_y + self.display_image.size[1]
+
+        if new_left < img_left:
+            new_left = img_left
+            new_right = new_left + width
+        if new_right > img_right:
+            new_right = img_right
+            new_left = new_right - width
+        if new_top < img_top:
+            new_top = img_top
+            new_bottom = new_top + height
+        if new_bottom > img_bottom:
+            new_bottom = img_bottom
+            new_top = new_bottom - height
+
+        self.canvas.coords(self.crop_rect_id, new_left, new_top, new_right, new_bottom)
+        self.move_anchor = (x, y)
+
     def _clear_crop_overlay(self) -> None:
-        if self.crop_overlay_id is not None:
-            self.canvas.delete(self.crop_overlay_id)
-            self.crop_overlay_id = None
-        self.crop_overlay_tk = None
+        if not self.crop_overlay_ids:
+            return
+        for overlay_id in self.crop_overlay_ids:
+            self.canvas.delete(overlay_id)
+        self.crop_overlay_ids = []
 
     def _update_crop_overlay(self) -> None:
         if self.crop_rect_id is None:
@@ -389,32 +674,35 @@ class PhotoEditorApp(TK_ROOT):
             self._clear_crop_overlay()
             return
 
+        if len(self.crop_overlay_ids) != 4:
+            self._clear_crop_overlay()
+            mask_color = self.canvas.cget("background")
+            for _ in range(4):
+                self.crop_overlay_ids.append(
+                    self.canvas.create_rectangle(
+                        0,
+                        0,
+                        0,
+                        0,
+                        fill=mask_color,
+                        outline="",
+                    )
+                )
+
         img_left = self.image_x
         img_top = self.image_y
         img_right = self.image_x + self.display_image.size[0]
         img_bottom = self.image_y + self.display_image.size[1]
-        overlay_width = self.display_image.size[0]
-        overlay_height = self.display_image.size[1]
+        self.canvas.coords(self.crop_overlay_ids[0], img_left, img_top, img_right, top)
+        self.canvas.coords(self.crop_overlay_ids[1], img_left, bottom, img_right, img_bottom)
+        self.canvas.coords(self.crop_overlay_ids[2], img_left, top, left, bottom)
+        self.canvas.coords(self.crop_overlay_ids[3], right, top, img_right, bottom)
 
-        cut_left = max(0, min(int(left - img_left), overlay_width))
-        cut_top = max(0, min(int(top - img_top), overlay_height))
-        cut_right = max(0, min(int(right - img_left), overlay_width))
-        cut_bottom = max(0, min(int(bottom - img_top), overlay_height))
-
-        overlay = Image.new("RGBA", (overlay_width, overlay_height), (127, 147, 175, 177))
-        draw = ImageDraw.Draw(overlay)
-        draw.rectangle((cut_left, cut_top, cut_right, cut_bottom), fill=(0, 0, 0, 0))
-
-        self.crop_overlay_tk = ImageTk.PhotoImage(overlay)
-        if self.crop_overlay_id is None:
-            self.crop_overlay_id = self.canvas.create_image(
-                img_left, img_top, anchor="nw", image=self.crop_overlay_tk
-            )
-        else:
-            self.canvas.itemconfigure(self.crop_overlay_id, image=self.crop_overlay_tk)
-
-        self.canvas.tag_raise(self.crop_overlay_id)
+        for overlay_id in self.crop_overlay_ids:
+            self.canvas.tag_raise(overlay_id)
         self.canvas.tag_raise(self.crop_rect_id)
+        for guide_id in self.crop_corner_ids:
+            self.canvas.tag_raise(guide_id)
 
     def _clear_crop_size_indicator(self) -> None:
         if self.crop_size_bg_id is not None:
@@ -495,10 +783,43 @@ class PhotoEditorApp(TK_ROOT):
         self.crop_button.configure(text="Undo" if is_undo else "Crop")
 
     def on_crop_or_undo(self) -> None:
-        if self.undo_image is not None:
+        if self.undo_image is not None and not self.crop_mode:
             self.undo_last_crop()
             return
+        if not self.crop_mode:
+            self._begin_crop_mode()
+            return
         self.apply_crop()
+
+    def _begin_crop_mode(self) -> None:
+        if self.working_image is None or self.display_image is None:
+            return
+
+        self._clear_crop_selection()
+        self.crop_mode = True
+        self.active_corner = None
+
+        img_left = self.image_x
+        img_top = self.image_y
+        img_right = self.image_x + self.display_image.size[0]
+        img_bottom = self.image_y + self.display_image.size[1]
+
+        left = img_left
+        top = img_top
+        right = img_right
+        bottom = img_bottom
+
+        self.crop_rect_id = self.canvas.create_rectangle(
+            left,
+            top,
+            right,
+            bottom,
+            outline=self.GUIDE_COLOR,
+            width=1,
+        )
+        self._update_crop_overlay()
+        self._draw_corner_guides()
+        self._update_crop_size_indicator()
 
     def _clamp_to_image(
         self, x: int, y: int, require_inside: bool = False
@@ -720,7 +1041,11 @@ class PhotoEditorApp(TK_ROOT):
 
 
 def main() -> None:
-    app = PhotoEditorApp()
+    parser = argparse.ArgumentParser(description="Quick Crop + Compress")
+    parser.add_argument("image_path", nargs="?", help="Image file to open on launch")
+    args = parser.parse_args()
+
+    app = PhotoEditorApp(initial_path=args.image_path)
     app.mainloop()
 
 
