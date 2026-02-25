@@ -30,7 +30,7 @@ class PhotoEditorApp(TK_ROOT):
     PAD_X_RATIO = 0.06
     PAD_Y_RATIO = 0.06
     GUIDE_COLOR = "#F4F4F4"
-    CANVAS_BG = "#282827"
+    CANVAS_BG = "#9E9E9E"
     MIN_ZOOM = 0.25
     MAX_ZOOM = 8.0
 
@@ -68,10 +68,10 @@ class PhotoEditorApp(TK_ROOT):
         self.crop_info_font = tkfont.Font(family="Helvetica Neue", size=11, weight="bold")
 
         self.target_kb_var = tk.StringVar(value="300")
-        self.max_width_var = tk.StringVar(value="")
+        self.max_width_var = tk.StringVar(value="1000")
         self.status_var = tk.StringVar(value="")
-        self.bg_gray_var = tk.IntVar(value=40)
-        self.bg_gray_value_var = tk.StringVar(value="40")
+        self.bg_gray_var = tk.IntVar(value=158)
+        self.bg_gray_value_var = tk.StringVar(value="158")
 
         self._setup_styles()
         self._build_ui()
@@ -208,9 +208,14 @@ class PhotoEditorApp(TK_ROOT):
         control_row = ttk.Frame(main, style="Bar.TFrame", padding=(10, 6))
         control_row.pack(fill="x", pady=(0, 8))
 
-        ttk.Button(control_row, text="Open", style="Primary.TButton", command=self.open_image, takefocus=False).pack(
-            side="left", padx=(0, 8)
+        self.open_button = ttk.Button(
+            control_row,
+            text="Open",
+            style="Primary.TButton",
+            command=self.open_image,
+            takefocus=False,
         )
+        self.open_button.pack(side="left", padx=(0, 8))
         self.crop_button = ttk.Button(
             control_row, text="Crop", style="Neutral.TButton", command=self.on_crop_or_undo, takefocus=False
         )
@@ -304,12 +309,18 @@ class PhotoEditorApp(TK_ROOT):
         self.bind("<Configure>", self._on_window_resize)
         self.bind("<Escape>", self._on_escape_key)
 
+        self.bind_all("<KeyPress-o>", self._on_shortcut_open, add="+")
+        self.bind_all("<KeyPress-O>", self._on_shortcut_open, add="+")
         self.bind_all("<KeyPress-c>", self._on_shortcut_crop, add="+")
         self.bind_all("<KeyPress-C>", self._on_shortcut_crop, add="+")
         self.bind_all("<KeyPress-s>", self._on_shortcut_save, add="+")
         self.bind_all("<KeyPress-S>", self._on_shortcut_save, add="+")
         self.bind_all("<KeyPress-u>", self._on_shortcut_undo, add="+")
         self.bind_all("<KeyPress-U>", self._on_shortcut_undo, add="+")
+        self.bind_all("<KeyPress-k>", self._on_shortcut_compress, add="+")
+        self.bind_all("<KeyPress-K>", self._on_shortcut_compress, add="+")
+        self.bind_all("<Return>", self._on_shortcut_enter_save, add="+")
+        self.bind_all("<KP_Enter>", self._on_shortcut_enter_save, add="+")
 
         self.bind_all("<KeyPress-equal>", self._on_shortcut_zoom_in, add="+")
         self.bind_all("<KeyPress-plus>", self._on_shortcut_zoom_in, add="+")
@@ -328,6 +339,8 @@ class PhotoEditorApp(TK_ROOT):
         for seq in ("<Control-minus>", "<Control-KP_Subtract>", "<Command-minus>", "<Command-KP_Subtract>"):
             self.bind_all(seq, self._on_shortcut_zoom_out, add="+")
 
+        self._set_action_highlight("open")
+
     @staticmethod
     def _gray_to_hex(value: int) -> str:
         gray = max(0, min(255, int(value)))
@@ -337,7 +350,7 @@ class PhotoEditorApp(TK_ROOT):
         try:
             gray = int(float(value))
         except (TypeError, ValueError):
-            gray = int(self.bg_gray_var.get() or 40)
+            gray = int(self.bg_gray_var.get() or 158)
         gray = max(0, min(255, gray))
 
         if int(self.bg_gray_var.get()) != gray:
@@ -352,6 +365,15 @@ class PhotoEditorApp(TK_ROOT):
 
     def _on_bg_gray_changed(self, value: str) -> None:
         self._apply_bg_gray(value)
+
+    def _set_action_highlight(self, target: str | None) -> None:
+        if hasattr(self, "open_button"):
+            self.open_button.configure(style="Primary.TButton" if target == "open" else "Neutral.TButton")
+        if hasattr(self, "crop_button"):
+            self.crop_button.configure(style="Primary.TButton" if target == "crop" else "Neutral.TButton")
+
+    def _has_loaded_image(self) -> bool:
+        return self.working_image is not None
 
     def _on_window_resize(self, event: tk.Event) -> None:
         if event.widget == self:
@@ -433,6 +455,12 @@ class PhotoEditorApp(TK_ROOT):
             return True
         return False
 
+    def _on_shortcut_open(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus():
+            return None
+        self.open_image()
+        return "break"
+
     def _on_shortcut_crop(self, _event: tk.Event) -> str | None:
         if self._entry_has_focus():
             return None
@@ -449,6 +477,20 @@ class PhotoEditorApp(TK_ROOT):
         if self._entry_has_focus():
             return None
         self.undo_last_crop()
+        return "break"
+
+    def _on_shortcut_compress(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus():
+            return None
+        self.save_compressed()
+        return "break"
+
+    def _on_shortcut_enter_save(self, _event: tk.Event) -> str | None:
+        if self._entry_has_focus():
+            return None
+        if not self.crop_mode:
+            return None
+        self.save_cropped()
         return "break"
 
     def _on_shortcut_zoom_in(self, _event: tk.Event) -> str | None:
@@ -493,6 +535,7 @@ class PhotoEditorApp(TK_ROOT):
         self.zoom_ratio = 1.0
         self._set_zoom_text()
         self._set_crop_button_mode(is_undo=False)
+        self._set_action_highlight(None)
         self.status_var.set("")
         self._render_image()
         return True
@@ -665,6 +708,9 @@ class PhotoEditorApp(TK_ROOT):
         self.move_anchor = None
         if self.undo_image is None:
             self._set_crop_button_mode(is_undo=False)
+            self._set_action_highlight(None if self._has_loaded_image() else "open")
+        else:
+            self._set_action_highlight("crop")
 
     def _clear_crop_selection(self) -> None:
         self.active_corner = None
@@ -698,37 +744,67 @@ class PhotoEditorApp(TK_ROOT):
         if width < 2 or height < 2:
             return
 
-        seg = max(14, min(30, int(min(width, height) * 0.18)))
-        color = self.GUIDE_COLOR
-        thickness = 3
+        arm = max(10, min(22, int(min(width, height) * 0.14)))
+        fill_color = self.GUIDE_COLOR
+        border_color = "#000000"
+        stroke = 3
+
+        def draw_corner_polygon(points: list[tuple[float, float]]) -> None:
+            flattened: list[float] = []
+            for px, py in points:
+                flattened.extend([px, py])
+            self.crop_corner_ids.append(
+                self.canvas.create_polygon(
+                    *flattened,
+                    fill=fill_color,
+                    outline=border_color,
+                    width=1,
+                )
+            )
 
         # Top-left: ⌜
-        self.crop_corner_ids.append(
-            self.canvas.create_line(left, top, left + seg, top, fill=color, width=thickness, capstyle="round")
-        )
-        self.crop_corner_ids.append(
-            self.canvas.create_line(left, top, left, top + seg, fill=color, width=thickness, capstyle="round")
+        draw_corner_polygon(
+            [
+                (left, top),
+                (left + arm, top),
+                (left + arm, top + stroke),
+                (left + stroke, top + stroke),
+                (left + stroke, top + arm),
+                (left, top + arm),
+            ]
         )
         # Top-right: ⌝
-        self.crop_corner_ids.append(
-            self.canvas.create_line(right - seg, top, right, top, fill=color, width=thickness, capstyle="round")
-        )
-        self.crop_corner_ids.append(
-            self.canvas.create_line(right, top, right, top + seg, fill=color, width=thickness, capstyle="round")
+        draw_corner_polygon(
+            [
+                (right, top),
+                (right - arm, top),
+                (right - arm, top + stroke),
+                (right - stroke, top + stroke),
+                (right - stroke, top + arm),
+                (right, top + arm),
+            ]
         )
         # Bottom-left: ⌞
-        self.crop_corner_ids.append(
-            self.canvas.create_line(left, bottom, left + seg, bottom, fill=color, width=thickness, capstyle="round")
-        )
-        self.crop_corner_ids.append(
-            self.canvas.create_line(left, bottom - seg, left, bottom, fill=color, width=thickness, capstyle="round")
+        draw_corner_polygon(
+            [
+                (left, bottom),
+                (left + arm, bottom),
+                (left + arm, bottom - stroke),
+                (left + stroke, bottom - stroke),
+                (left + stroke, bottom - arm),
+                (left, bottom - arm),
+            ]
         )
         # Bottom-right: ⌟
-        self.crop_corner_ids.append(
-            self.canvas.create_line(right - seg, bottom, right, bottom, fill=color, width=thickness, capstyle="round")
-        )
-        self.crop_corner_ids.append(
-            self.canvas.create_line(right, bottom - seg, right, bottom, fill=color, width=thickness, capstyle="round")
+        draw_corner_polygon(
+            [
+                (right, bottom),
+                (right - arm, bottom),
+                (right - arm, bottom - stroke),
+                (right - stroke, bottom - stroke),
+                (right - stroke, bottom - arm),
+                (right, bottom - arm),
+            ]
         )
 
         for guide_id in self.crop_corner_ids:
@@ -1062,6 +1138,7 @@ class PhotoEditorApp(TK_ROOT):
             outline=self.GUIDE_COLOR,
             width=1,
         )
+        self._set_action_highlight("crop")
         self._update_crop_overlay()
         self._draw_corner_guides()
         self._update_crop_size_indicator()
@@ -1111,6 +1188,7 @@ class PhotoEditorApp(TK_ROOT):
 
         self.working_image = self.working_image.crop((src_x1, src_y1, src_x2, src_y2))
         self._set_crop_button_mode(is_undo=True)
+        self._set_action_highlight("crop")
         self.status_var.set("")
         self._render_image()
 
@@ -1120,6 +1198,7 @@ class PhotoEditorApp(TK_ROOT):
         self.working_image = self.undo_image
         self.undo_image = None
         self._set_crop_button_mode(is_undo=False)
+        self._set_action_highlight(None if self._has_loaded_image() else "open")
         self.status_var.set("")
         self._render_image()
 
@@ -1183,7 +1262,10 @@ class PhotoEditorApp(TK_ROOT):
             title="Save",
             initialfile=os.path.basename(self._default_compressed_output_path()),
             defaultextension=".jpg",
-            filetypes=[("JPEG", "*.jpg *.jpeg")],
+            filetypes=[
+                ("JPEG", "*.jpg *.jpeg"),
+                ("PNG", "*.png"),
+            ],
         )
         if not output:
             return
@@ -1194,13 +1276,24 @@ class PhotoEditorApp(TK_ROOT):
             resized_h = max(int(to_save.height * ratio), 1)
             to_save = to_save.resize((max_width, resized_h), Image.Resampling.LANCZOS)
 
-        if to_save.mode != "RGB":
-            to_save = to_save.convert("RGB")
-
+        ext = os.path.splitext(output)[1].lower()
         try:
-            self._write_jpeg(to_save, output, target_kb=target_kb)
+            if ext in (".jpg", ".jpeg"):
+                if to_save.mode != "RGB":
+                    to_save = to_save.convert("RGB")
+                self._write_jpeg(to_save, output, target_kb=target_kb)
+            elif ext == ".png":
+                if target_kb is not None:
+                    messagebox.showinfo(
+                        "PNG note",
+                        "Target size (KB) is applied to JPEG only. PNG will be saved with optimize compression.",
+                    )
+                self._write_png(to_save, output)
+            else:
+                messagebox.showerror("Invalid format", "Choose either JPEG (.jpg/.jpeg) or PNG (.png).")
+                return
         except OSError as exc:
-            messagebox.showerror("Save failed", f"Could not save JPEG:\n{exc}")
+            messagebox.showerror("Save failed", f"Could not save image:\n{exc}")
             return
 
         self.status_var.set("")
@@ -1268,6 +1361,9 @@ class PhotoEditorApp(TK_ROOT):
 
         with open(output_path, "wb") as f:
             f.write(best_blob)
+
+    def _write_png(self, image: Image.Image, output_path: str) -> None:
+        image.save(output_path, format="PNG", optimize=True, compress_level=9)
 
     def _encode_jpeg(self, image: Image.Image, quality: int) -> bytes:
         data = io.BytesIO()
