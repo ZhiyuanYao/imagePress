@@ -5,6 +5,8 @@
 .DS_Store
 Icon?
 
+release/
+
 # Windows
 Thumbs.db
 ehthumbs.db

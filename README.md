@@ -2,6 +2,7 @@
 
 Small desktop image editor focused on:
 - Crop by drag-selecting a rectangle
+- Resize by dragging the bottom-right guide
 - Save cropped result directly (without size-target compression)
 - Compress to a target JPEG size (KB)
 - Optional max-width resize during export
@@ -14,7 +15,7 @@ On macOS, Dock icon update uses Cocoa (`pyobjc-framework-Cocoa`).
 ## Run
 
 ```bash
-cd /Users/zhiyuanyao/Nutstore/System/Python/Library/imagine
+cd /Users/zhiyuanyao/Nutstore/System/Python/Library/imagePress
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -43,9 +44,11 @@ python -c "import tkinterdnd2; print('DnD OK')"
 3. Drag the corner handles (`⌜ ⌝ ⌞ ⌟`) to adjust the crop region
    - press `Esc` to clear the current crop selection/mode
 4. Click `Crop` again to apply the crop
-5. After crop, `Crop` becomes `Undo` for one-step rollback
-6. Use `Save` for direct export
-7. Use `Compress` if you want size-target compression (`max size`) and optional resize width (`max width`)
+5. Click `Resize` to enter resize mode and drag the bottom-right guide (`⌟`) to set target W x H
+6. Click `Resize` again to apply the resize
+7. After apply, that action button becomes `Undo` for one-step rollback
+8. Use `Save` for direct export
+9. In resize mode, you can directly click `Compress` to apply resize and export compressed output
 
 ## Build as macOS app (optional)
 
