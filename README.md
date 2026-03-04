@@ -1,12 +1,17 @@
-# Quick Crop + Compress (macOS)
+# Quick Image Utilities (macOS)
 
-Small desktop image editor focused on:
+Small desktop utility focused on convert, crop, resize, and compress workflows:
+- Convert between common image formats (JPEG, PNG, TIFF) without leaving the app
 - Crop by drag-selecting a rectangle
-- Resize by dragging the bottom-right guide
-- Save cropped result directly (without size-target compression)
-- Compress to a target JPEG size (KB)
-- Optional max-width resize during export
+- Resize via the bottom-right guide and optional max-width export
+- Compress to a target JPEG size (KB) while applying the current crop/resize
 - Drag and drop image files to open
+
+## Version 0.1
+
+- Feature a compact Convert → Crop → Resize → Compress pipeline for local image tweaks.
+- Refresh ImagePress branding with `static/imagePress.png` (macOS icon generated via `scripts/build_icon.py`).
+- Keep README, spec, and assets aligned so the packaged macOS bundle mirrors the utility demo.
 
 This is a lightweight local app using `tkinter + Pillow`, which is simpler than a full Pintura integration when you mainly need crop + compress.
 The app icon is loaded from `static/imagePress.png` (`static/imagePress.svg` is optional fallback if `cairosvg` is available).
