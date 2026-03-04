@@ -89,6 +89,7 @@ class PhotoEditorApp(TK_ROOT):
         self.resize_mode = False
         self.active_corner: str | None = None
         self.active_drag_mode: str | None = None
+        self.resize_drag_aspect: float | None = None
         self.move_anchor: tuple[int, int] | None = None
         self.crop_corner_ids: list[int] = []
         self.crop_size_text_id: int | None = None
@@ -800,10 +801,16 @@ class PhotoEditorApp(TK_ROOT):
             self.active_corner = self._hit_resize_handle(cx, cy)
             if self.active_corner is not None:
                 self.active_drag_mode = "resize_corner"
+                if self.crop_rect_id is not None:
+                    x1, y1, x2, y2 = self.canvas.coords(self.crop_rect_id)
+                    base_w = max(abs(x2 - x1), 1.0)
+                    base_h = max(abs(y2 - y1), 1.0)
+                    self.resize_drag_aspect = base_w / base_h
                 self.move_anchor = None
                 return
             self.active_corner = None
             self.active_drag_mode = None
+            self.resize_drag_aspect = None
             self.move_anchor = None
             return
 
@@ -840,7 +847,8 @@ class PhotoEditorApp(TK_ROOT):
             constrain_square = bool(getattr(event, "state", 0) & 0x0001)
             self._drag_corner_handle(self.active_corner, x, y, constrain_square=constrain_square)
         elif self.active_drag_mode == "resize_corner":
-            self._drag_resize_handle(cx, cy)
+            keep_aspect = bool(getattr(event, "state", 0) & 0x0001)
+            self._drag_resize_handle(cx, cy, keep_aspect=keep_aspect)
             self._update_resize_preview()
         elif self.active_drag_mode == "move":
             x, y = self._clamp_to_image(cx, cy)
@@ -857,6 +865,7 @@ class PhotoEditorApp(TK_ROOT):
     def _on_mouse_up(self, _event: tk.Event) -> None:
         self.active_corner = None
         self.active_drag_mode = None
+        self.resize_drag_aspect = None
         self.move_anchor = None
 
     def _on_escape_key(self, _event: tk.Event) -> None:
@@ -875,6 +884,7 @@ class PhotoEditorApp(TK_ROOT):
     def _clear_crop_selection(self) -> None:
         self.active_corner = None
         self.active_drag_mode = None
+        self.resize_drag_aspect = None
         self.move_anchor = None
         self._clear_corner_guides()
         self._clear_crop_overlay()
@@ -1154,7 +1164,7 @@ class PhotoEditorApp(TK_ROOT):
         self.canvas.coords(self.crop_rect_id, new_left, new_top, new_right, new_bottom)
         self.move_anchor = (x, y)
 
-    def _drag_resize_handle(self, x: int, y: int) -> None:
+    def _drag_resize_handle(self, x: int, y: int, keep_aspect: bool = False) -> None:
         if self.crop_rect_id is None:
             return
         if self.display_image is None:
@@ -1172,8 +1182,37 @@ class PhotoEditorApp(TK_ROOT):
 
         left = img_left
         top = img_top
-        right = max(left + min_size, min(x, left + max_display_w))
-        bottom = max(top + min_size, min(y, top + max_display_h))
+        target_w = max(min_size, min(float(x - left), float(max_display_w)))
+        target_h = max(min_size, min(float(y - top), float(max_display_h)))
+
+        next_w = target_w
+        next_h = target_h
+        if keep_aspect:
+            ratio = self.resize_drag_aspect
+            if ratio is None or ratio <= 0:
+                current_h = max(abs(y2 - y1), 1.0)
+                ratio = max(abs(x2 - x1) / current_h, 1e-6)
+            # Choose the closest constrained size to pointer movement, within bounds.
+            k_min = max(min_size / ratio, float(min_size))
+            k_max = min(max_display_w / ratio, float(max_display_h))
+            if k_max >= k_min:
+                k_from_w = min(max(target_w / ratio, k_min), k_max)
+                k_from_h = min(max(target_h, k_min), k_max)
+                cand1_w = ratio * k_from_w
+                cand1_h = k_from_w
+                cand2_w = ratio * k_from_h
+                cand2_h = k_from_h
+                d1 = ((cand1_w - target_w) ** 2) + ((cand1_h - target_h) ** 2)
+                d2 = ((cand2_w - target_w) ** 2) + ((cand2_h - target_h) ** 2)
+                if d1 <= d2:
+                    next_w, next_h = cand1_w, cand1_h
+                else:
+                    next_w, next_h = cand2_w, cand2_h
+            next_w = max(min_size, min(float(max_display_w), next_w))
+            next_h = max(min_size, min(float(max_display_h), next_h))
+
+        right = left + next_w
+        bottom = top + next_h
 
         self.canvas.coords(self.crop_rect_id, left, top, right, bottom)
         canvas_w = max(self.canvas.winfo_width(), 1)
