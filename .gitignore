@@ -45,3 +45,6 @@ __pycache__/
 *.tmp
 *.temp
 *.swp
+dist/
+build/
+.pyinstaller_cache/
