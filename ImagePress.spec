@@ -39,6 +39,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='static/imagePress.icns',
 )
 coll = COLLECT(
     exe,
@@ -52,6 +53,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='ImagePress.app',
-    icon=None,
-    bundle_identifier=None,
+    icon='static/imagePress.icns',
+    bundle_identifier='com.zhiyuanyao.imagepress',
 )

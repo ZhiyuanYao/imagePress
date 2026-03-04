@@ -9,7 +9,7 @@ Small desktop image editor focused on:
 - Drag and drop image files to open
 
 This is a lightweight local app using `tkinter + Pillow`, which is simpler than a full Pintura integration when you mainly need crop + compress.
-The app icon is loaded from `static/imagine.png` (`static/imagine.svg` is optional fallback if `cairosvg` is available).
+The app icon is loaded from `static/imagePress.png` (`static/imagePress.svg` is optional fallback if `cairosvg` is available).
 On macOS, Dock icon update uses Cocoa (`pyobjc-framework-Cocoa`).
 
 ## Run

@@ -176,10 +176,9 @@ class PhotoEditorApp(TK_ROOT):
 
     def _set_app_icon(self) -> None:
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        png_main_path = os.path.join(base_dir, "static", "imagine.png")
-        png_fallback_path = os.path.join(base_dir, "static", "imagine_icon.png")
-        svg_path = os.path.join(base_dir, "static", "imagine.svg")
-        png_candidates = [png_main_path, png_fallback_path]
+        png_path = os.path.join(base_dir, "static", "imagePress.png")
+        svg_path = os.path.join(base_dir, "static", "imagePress.svg")
+        png_candidates = [png_path]
 
         for png_path in png_candidates:
             if not os.path.isfile(png_path):

@@ -5,8 +5,6 @@
 .DS_Store
 Icon?
 
-release/
-
 # Windows
 Thumbs.db
 ehthumbs.db
@@ -47,4 +45,5 @@ __pycache__/
 *.swp
 dist/
 build/
+release/
 .pyinstaller_cache/
